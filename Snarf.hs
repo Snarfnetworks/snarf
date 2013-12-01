@@ -1,25 +1,34 @@
 type Activity = Double
+
+data SparseNode = SparseNode { 
+      sparseNodeActivity :: Activity          -- ^ current activation output level. Has to be updated manually (through evaluate)
+}
+
+instance Show SparseNode where
+   show (SparseNode a) = show . myround 100 $ a
+                       where myround s = (/s) . fromIntegral . round . (*s)
+
+class HasActivity n where
+    evolve :: n -> n
+
+data Network = Network {
+  networkNodes :: Nodes,                      -- ^ List of all Nodes
+  networkWeightedEdges :: WeightedEdges,      -- ^ List of all Edges
+  networkArchitecture :: Architecture         -- ^ List of node counts for each layer
+} deriving (Show)
+
+type Architecture = [Int]
+type Layer = Network
+
+type Nodes = [SparseNode]
+type WeightedEdges = [(Weight, Edge)]
+type Edge = (NodeIndex, NodeIndex)
+type NodeIndex = Int
 type Weight = Double
 type Threshold = Double
 type Logit = Double
 
-class Node n where
-    evaluate :: n -> n
-    logit :: n -> Logit
-
-data SparseNode = SparseNode { 
-      sparseNodeActivity :: Activity          -- ^ current activation output level. Has to be updated manually (through evaluate)
-    , sparseNodePredecessors :: [SparseNode]  -- ^ input nodes
-    , sparseNodeWeights :: [Weight]           -- ^ weights for input node activation levels
-}-- deriving Show
-
--- | singleton node 
-inputNode a = SparseNode a [] []
-
-instance Show SparseNode where
-   show (SparseNode a _ _) = show . myround 100 $ a
-                           where myround s = (/s) . fromIntegral . round . (*s)
-
+{-
 instance Node SparseNode where
     evaluate n@(SparseNode a ps ws)
       | null ps = n                 -- allow for input nodes to let their activity be unaffected despite having no inputs
@@ -34,39 +43,42 @@ heaviside x | x  > 0    = 1
             | otherwise = 0
 
 sigmoid x = 1 / (1 + (exp (-x)))
+-}
+
 
 
 --Architecture/ NetLib
 
-data Layer n = Layer [n] --TODO How can I restrict n to be instance of typeclass Node? A: newtype
-    deriving (Show)
+-- | create fully connected multi layer network from a list of node counts per layer
+createNetwork :: Architecture -> Network
+createNetwork = foldl1 stackLayer . map createLayer
 
-instance Functor Layer where
-    fmap f (Layer n) = Layer $ map f n
+-- | create one layer network from number of nodes
+createLayer :: Int -> Layer
+createLayer n = Network nodes [] [n]
+              where nodes = take n . repeat $ singletonNode 0.5
+
+-- | singleton node 
+singletonNode a = SparseNode a
+
+-- | add a one layer network with full connectivity to last layer of old network
+stackLayer :: Network -> Layer -> Network
+stackLayer n@(Network ns wes a) l = Network (ns++newnodes) (wes++newedges) (a++[newnodecount])
+  where newedges = [(1, (oldnodecount - lastlayernodecount + ip, oldnodecount + is)) | ip <- [0..lastlayernodecount-1], is <- [0..newnodecount-1]]
+        newnodes = networkNodes l
+        oldnodecount = length ns
+        newnodecount = length newnodes
+        lastlayernodecount = last a
+
+networkNodeIndices = accumulate . networkArchitecture
+networkEdgeIndices = accumulate . edgeCounts
+accumulate = scanl (+) 0
+
+edgeCounts = combinePairs (*) . networkArchitecture
+combinePairs f xs = map (uncurry f) $ zip (init xs) (tail xs)
+
+
 
 -- Test data
 
-
--- nodes
-n1 = SparseNode 0.0 (map inputNode [0.1, 0.4, 0.3]) [2, -3, 1]
-n2 = inputNode 0.7
-n3 = inputNode 0.1
-n4 = inputNode 0.9
-n5 = inputNode 0.99
-
-n6 = SparseNode 0.0 [n1, n2, n3] [1, -1, 3]
-n7 = SparseNode 1.0 [n3] [3]
-n8 = SparseNode 1.0 [n3, n4, n5] [-1, 1, 0]
-
-n9 = SparseNode 0.0 [n6, n7] [0.1, 1]
-n10 = SparseNode 1 [n7, n8] [-1, 1]
-
-n11 = SparseNode 0.0 [n9, n10] [-1, 5]
-
--- layer
-l1 = Layer [n1, n2, n3, n4, n5] 
-l2 = Layer [n6, n7, n8]
-l3 = Layer [n9, n10]
-
-main = let nodeList = [n1, n2, n3, n4, n5, n6, n7, n8, n9, n10, n11] in
-              putStrLn $ show $ fmap evaluate nodeList
+testnetwork = createNetwork [1, 1]
